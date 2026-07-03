@@ -1,0 +1,59 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcworkspace/xcshareddata/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+!default.pbxuser
+!default.mode1v3
+!default.mode2v3
+!default.perspectivev3
+
+# Swift Package Manager
+.build/
+*.resolved
+
+# DerivedData
+DerivedData/
+build/
+
+# Instruments
+*.trace
+
+# CocoaPods
+Pods/
+
+# Carthage
+Carthage/Build/
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# Archives
+*.xcarchive
+
+# Old project files (leftover from rename)
+Planner/
+Planner.xcodeproj/
+PlannerTests/
+PlannerUITests/
+
+# Copies & backups
+Annote copy/
+*~
+
+# graphify knowledge graph output (local only)
+graphify-out/
+
+# Old backup/scratch folders
+Annote/New\ Folder\ With\ Items/
+"Annote/New Folder With Items/"
