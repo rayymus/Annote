@@ -15,11 +15,16 @@
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat" alt="MIT">
 </p>
 
-<p align="center">
-  <img src="sample_images/front_page.png" alt="Front page" width="45%">
-  &nbsp;
-  <img src="sample_images/annotation.png" alt="Annotations" width="45%">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="sample_images/front_page.png" alt="Front page" width="100%">
+    </td>
+    <td align="center" width="50%">
+      <img src="sample_images/annotation.png" alt="Annotations" width="100%">
+    </td>
+  </tr>
+</table>
 
 ---
 
