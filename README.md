@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="sample_images/app_icon.png" alt="Annote Icon" width="120">
+  <img src="sample_images/annote_icon.png" alt="Annote Icon" width="120">
 </p>
 
 <h1 align="center">Annote</h1>
