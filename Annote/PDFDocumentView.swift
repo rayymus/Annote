@@ -150,20 +150,26 @@ struct ZoomablePageView: UIViewRepresentable {
         swipeRight.allowedTouchTypes = [UITouch.TouchType.direct.rawValue as NSNumber]
         swipeRight.delegate = context.coordinator
         scrollView.addGestureRecognizer(swipeRight)
-        
-        // Add hold gesture to canvas to preview line straightening while drawing
-        let holdGesture = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleDrawingHold(_:)))
-        holdGesture.minimumPressDuration = 0.65
-        holdGesture.allowableMovement = 15
-        holdGesture.delegate = context.coordinator
+        // Add pause gesture to canvas to preview line straightening while drawing
+        let coordinator = context.coordinator
+        let holdGesture = PauseGestureRecognizer()
+        holdGesture.delegate = coordinator
+        holdGesture.onPauseBegan = { [weak coordinator] start, current in
+            coordinator?.handlePauseBegan(start: start, current: current)
+        }
+        holdGesture.onPauseChanged = { [weak coordinator] current in
+            coordinator?.handlePauseChanged(current: current)
+        }
+        holdGesture.onPauseEnded = { [weak coordinator] in
+            coordinator?.handlePauseEnded()
+        }
         canvas.addGestureRecognizer(holdGesture)
         
         // Load initial drawing directly
-        let initialDrawing = context.coordinator.loadDrawing()
+        let initialDrawing = coordinator.loadDrawing()
         canvas.drawing = initialDrawing
         
         // Disable back swipe pop gesture to prevent conflict with PDF document swipe actions
-        let coordinator = context.coordinator
         DispatchQueue.main.async {
             if let nav = coordinator.findNavigationController(from: scrollView) {
                 coordinator.navigationController = nav
@@ -184,6 +190,10 @@ struct ZoomablePageView: UIViewRepresentable {
             isHighlightAssistEnabled: isHighlightAssistEnabled,
             colorScheme: colorScheme
         )
+        
+        if let nav = context.coordinator.navigationController {
+            nav.interactivePopGestureRecognizer?.isEnabled = (pageIndex == 0)
+        }
     }
     
     func makeCoordinator() -> Coordinator {
@@ -294,6 +304,57 @@ struct ZoomablePageView: UIViewRepresentable {
             tv.textContainer.lineFragmentPadding = 0
             tv.attributedText = attributedText
             return tv
+        }
+        
+        private func parseSimpleHTML(_ html: String, font: UIFont, textColor: UIColor) -> NSAttributedString {
+            var md = html
+            md = md.replacingOccurrences(of: "<strong>", with: "**")
+            md = md.replacingOccurrences(of: "</strong>", with: "**")
+            md = md.replacingOccurrences(of: "<b>", with: "**")
+            md = md.replacingOccurrences(of: "</b>", with: "**")
+            md = md.replacingOccurrences(of: "<em>", with: "*")
+            md = md.replacingOccurrences(of: "</em>", with: "*")
+            md = md.replacingOccurrences(of: "<i>", with: "*")
+            md = md.replacingOccurrences(of: "</i>", with: "*")
+            
+            // Strip remaining HTML tags
+            md = md.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            
+            // Unescape HTML entities
+            md = md.replacingOccurrences(of: "&amp;", with: "&")
+            md = md.replacingOccurrences(of: "&lt;", with: "<")
+            md = md.replacingOccurrences(of: "&gt;", with: ">")
+            md = md.replacingOccurrences(of: "&quot;", with: "\"")
+            md = md.replacingOccurrences(of: "&#x27;", with: "'")
+            md = md.replacingOccurrences(of: "&#x39;", with: "`")
+            
+            if let attrStr = try? NSAttributedString(markdown: md, options: .init(interpretedSyntax: .inlineOnly)) {
+                let mutable = NSMutableAttributedString(attributedString: attrStr)
+                let fullRange = NSRange(location: 0, length: mutable.length)
+                mutable.addAttribute(.foregroundColor, value: textColor, range: fullRange)
+                
+                // Merge the font while preserving traits like bold/italic from markdown
+                mutable.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
+                    if let customFont = value as? UIFont {
+                        var traits = customFont.fontDescriptor.symbolicTraits
+                        if customFont.fontName.contains("Bold") {
+                            traits.insert(.traitBold)
+                        }
+                        if customFont.fontName.contains("Italic") {
+                            traits.insert(.traitItalic)
+                        }
+                        
+                        let descriptor = font.fontDescriptor.withSymbolicTraits(traits) ?? font.fontDescriptor
+                        let finalFont = UIFont(descriptor: descriptor, size: font.pointSize)
+                        mutable.addAttribute(.font, value: finalFont, range: range)
+                    } else {
+                        mutable.addAttribute(.font, value: font, range: range)
+                    }
+                }
+                return mutable
+            }
+            
+            return NSAttributedString(string: md, attributes: [.font: font, .foregroundColor: textColor])
         }
         
         private func createSelectableTextView(text: String, font: UIFont, textColor: UIColor) -> UITextView {
@@ -414,58 +475,58 @@ struct ZoomablePageView: UIViewRepresentable {
             parent.onSwipeRight?()
         }
         
-        @objc func handleDrawingHold(_ gesture: UILongPressGestureRecognizer) {
+        func handlePauseBegan(start: CGPoint, current: CGPoint) {
             guard parent.isDrawingEnabled, let canvas = canvas, let overlayView = overlayView else { return }
-            let currentPoint = gesture.location(in: overlayView)
             
-            switch gesture.state {
-            case .began:
-                // Trigger subtle haptic feedback
-                let feedback = UIImpactFeedbackGenerator(style: .light)
-                feedback.impactOccurred()
-                didShowStraighteningPreview = true
-                
-                // Use active tool color and width for preview
-                let activeTool = toolPicker.selectedTool
-                var strokeColor = UIColor.label
-                var strokeWidth: CGFloat = 4
-                if let inkTool = activeTool as? PKInkingTool {
-                    strokeColor = inkTool.color
-                    strokeWidth = inkTool.width
-                }
-                
-                // Create preview line layer matching active tool appearance
-                let layer = CAShapeLayer()
-                layer.strokeColor = strokeColor.withAlphaComponent(0.4).cgColor
-                layer.lineWidth = strokeWidth
-                layer.lineCap = .round
-                layer.fillColor = nil
-                
-                let path = UIBezierPath()
-                if let start = drawingStartPoint {
-                    path.move(to: start)
-                    path.addLine(to: currentPoint)
-                }
-                layer.path = path.cgPath
-                overlayView.layer.addSublayer(layer)
-                previewLayer = layer
-                
-            case .changed:
-                if let start = drawingStartPoint, let layer = previewLayer {
-                    let path = UIBezierPath()
-                    path.move(to: start)
-                    path.addLine(to: currentPoint)
-                    layer.path = path.cgPath
-                }
-                
-            case .ended, .cancelled, .failed:
-                previewLayer?.removeFromSuperlayer()
-                previewLayer = nil
-                drawingStartPoint = nil
-                
-            default:
-                break
+            // Map coordinate space from canvas to overlayView
+            let startInOverlay = canvas.convert(start, to: overlayView)
+            let currentInOverlay = canvas.convert(current, to: overlayView)
+            
+            drawingStartPoint = startInOverlay
+            
+            // Trigger subtle haptic feedback
+            let feedback = UIImpactFeedbackGenerator(style: .light)
+            feedback.impactOccurred()
+            didShowStraighteningPreview = true
+            
+            // Use active tool color and width for preview
+            let activeTool = toolPicker.selectedTool
+            var strokeColor = UIColor.label
+            var strokeWidth: CGFloat = 4
+            if let inkTool = activeTool as? PKInkingTool {
+                strokeColor = inkTool.color
+                strokeWidth = inkTool.width
             }
+            
+            // Create preview line layer matching active tool appearance
+            let layer = CAShapeLayer()
+            layer.strokeColor = strokeColor.withAlphaComponent(0.4).cgColor
+            layer.lineWidth = strokeWidth
+            layer.lineCap = .round
+            layer.fillColor = nil
+            
+            let path = UIBezierPath()
+            path.move(to: startInOverlay)
+            path.addLine(to: currentInOverlay)
+            layer.path = path.cgPath
+            overlayView.layer.addSublayer(layer)
+            previewLayer = layer
+        }
+        
+        func handlePauseChanged(current: CGPoint) {
+            guard let start = drawingStartPoint, let layer = previewLayer, let canvas = canvas, let overlayView = overlayView else { return }
+            let currentInOverlay = canvas.convert(current, to: overlayView)
+            
+            let path = UIBezierPath()
+            path.move(to: start)
+            path.addLine(to: currentInOverlay)
+            layer.path = path.cgPath
+        }
+        
+        func handlePauseEnded() {
+            previewLayer?.removeFromSuperlayer()
+            previewLayer = nil
+            drawingStartPoint = nil
         }
         
         // MARK: - PKCanvasViewDelegate
@@ -628,14 +689,6 @@ struct ZoomablePageView: UIViewRepresentable {
         }
         
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            // Only capture start point for the canvas hold-to-straighten gesture
-            if gestureRecognizer is UILongPressGestureRecognizer && gestureRecognizer.view === canvas {
-                if let overlayView = overlayView {
-                    drawingStartPoint = touch.location(in: overlayView)
-                } else {
-                    drawingStartPoint = touch.location(in: canvas)
-                }
-            }
             return true
         }
         
@@ -743,6 +796,7 @@ struct ZoomablePageView: UIViewRepresentable {
                         }
                     }
                     uiImageForOCR = rawPageImage
+                    self.lastUiImageForOCR = rawPageImage
                     
                     let imageView = UIImageView(image: pdfImg)
                     imageView.frame = CGRect(x: 0, y: 0, width: originalWidth, height: originalHeight)
@@ -964,18 +1018,9 @@ struct ZoomablePageView: UIViewRepresentable {
                     for block in article.blocks {
                         switch block.type {
                         case "h1", "h2", "h3", "p":
-                            let htmlData = Data(block.text.utf8)
-                            let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
-                                .documentType: NSAttributedString.DocumentType.html,
-                                .characterEncoding: String.Encoding.utf8.rawValue
-                            ]
-                            let attrStr = NSMutableAttributedString(attributedString: (try? NSAttributedString(data: htmlData, options: options, documentAttributes: nil)) ?? NSAttributedString(string: block.text))
-                            
-                            let fullRange = NSRange(location: 0, length: attrStr.length)
                             let fontSize: CGFloat = block.type == "h1" ? 24 : (block.type == "h2" ? 20 : (block.type == "h3" ? 18 : 16))
                             let font = block.type.hasPrefix("h") ? UIFont.boldSystemFont(ofSize: fontSize) : UIFont.serifFont(size: fontSize)
-                            attrStr.addAttribute(.font, value: font, range: fullRange)
-                            attrStr.addAttribute(.foregroundColor, value: Theme.textColorUIColor(for: colorScheme), range: fullRange)
+                            let attrStr = self.parseSimpleHTML(block.text, font: font, textColor: Theme.textColorUIColor(for: colorScheme))
                             
                             let label = self.createSelectableTextView(attributedText: attrStr)
                             stack.addArrangedSubview(label)
@@ -1136,7 +1181,8 @@ struct ZoomablePageView: UIViewRepresentable {
                 scrollView?.zoomScale = 1.0
             }
             
-            if needsRebuild || viewportSizeChanged {
+            let isZoomed = (scrollView?.zoomScale ?? 1.0) > 1.0
+            if (needsRebuild || viewportSizeChanged) && !isZoomed {
                 let originalWidth = lastOriginalWidth
                 let originalHeight = lastOriginalHeight
                 
@@ -1149,19 +1195,15 @@ struct ZoomablePageView: UIViewRepresentable {
                 let pageY: CGFloat = 0
                 currentPageFrameInCanvas = CGRect(x: pageX, y: pageY, width: originalWidth, height: originalHeight)
                 
-                // ponytail: avoid resetting frames if bounds are already correct and we are zoomed in
-                let isZoomed = (scrollView?.zoomScale ?? 1.0) > 1.0
-                if !isZoomed || container.bounds.size != containerSize {
-                    container.frame = CGRect(origin: .zero, size: containerSize)
-                    docView.frame = currentPageFrameInCanvas
-                    overlayView.frame = currentPageFrameInCanvas
-                    canvas.frame = CGRect(origin: .zero, size: containerSize)
-                    canvas.contentSize = containerSize
-                    
-                    if let scrollView {
-                        scrollView.contentSize = containerSize
-                        centerContainer(scrollView: scrollView, container: container)
-                    }
+                container.frame = CGRect(origin: .zero, size: containerSize)
+                docView.frame = currentPageFrameInCanvas
+                overlayView.frame = currentPageFrameInCanvas
+                canvas.frame = CGRect(origin: .zero, size: containerSize)
+                canvas.contentSize = containerSize
+                
+                if let scrollView {
+                    scrollView.contentSize = containerSize
+                    centerContainer(scrollView: scrollView, container: container)
                 }
                 
                 lastViewportSize = viewportSize
@@ -1584,7 +1626,7 @@ struct ZoomablePageView: UIViewRepresentable {
             let startPoint = CGPoint(x: rect.minX, y: centerY)
             let endPoint = CGPoint(x: rect.maxX, y: centerY)
             
-            let strokeWidth = rect.height
+            let strokeWidth = rect.height * 1.3
             let size = CGSize(width: strokeWidth, height: strokeWidth)
             
             let p1 = PKStrokePoint(location: startPoint, timeOffset: 0, size: size, opacity: 1.0, force: 1.0, azimuth: 0, altitude: 0)
@@ -2123,3 +2165,78 @@ class EpubOpfDelegate: NSObject, XMLParserDelegate {
     }
 }
 import WebKit
+import UIKit.UIGestureRecognizerSubclass
+
+class PauseGestureRecognizer: UIGestureRecognizer {
+    var lastLocation: CGPoint = .zero
+    var startLocation: CGPoint = .zero
+    var onPauseBegan: ((CGPoint, CGPoint) -> Void)? // (start, current)
+    var onPauseChanged: ((CGPoint) -> Void)?
+    var onPauseEnded: (() -> Void)?
+    
+    private var timer: Timer?
+    private var isPaused = false
+    
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        guard let touch = touches.first else { return }
+        startLocation = touch.location(in: view)
+        lastLocation = startLocation
+        isPaused = false
+        resetTimer()
+    }
+    
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesMoved(touches, with: event)
+        guard let touch = touches.first else { return }
+        let loc = touch.location(in: view)
+        
+        let dist = distance(loc, lastLocation)
+        if dist > 8 {
+            lastLocation = loc
+            if isPaused {
+                onPauseChanged?(loc)
+            } else {
+                resetTimer()
+            }
+        }
+    }
+    
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesEnded(touches, with: event)
+        invalidateTimer()
+        if isPaused {
+            onPauseEnded?()
+        }
+        state = .failed
+    }
+    
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesCancelled(touches, with: event)
+        invalidateTimer()
+        if isPaused {
+            onPauseEnded?()
+        }
+        state = .failed
+    }
+    
+    private func resetTimer() {
+        invalidateTimer()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.isPaused = true
+            self.onPauseBegan?(self.startLocation, self.lastLocation)
+        }
+    }
+    
+    private func invalidateTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+    
+    private func distance(_ p1: CGPoint, _ p2: CGPoint) -> CGFloat {
+        let dx = p1.x - p2.x
+        let dy = p1.y - p2.y
+        return sqrt(dx*dx + dy*dy)
+    }
+}

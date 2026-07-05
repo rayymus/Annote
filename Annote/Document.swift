@@ -39,6 +39,9 @@ final class AnnoteDocument {
     
     var folder: AnnoteFolder?
     
+    // Flag to hide helper/sub-pages from main grid (e.g. blank pages inserted inside a document)
+    var isSecondary: Bool = false
+    
     // External storage attribute to prevent database bloat for large PDF binaries
     @Attribute(.externalStorage) var fileData: Data
     
@@ -54,7 +57,7 @@ final class AnnoteDocument {
     @Relationship(deleteRule: .cascade, inverse: \PageImageOverlay.document)
     var overlays: [PageImageOverlay] = []
     
-    init(id: UUID = UUID(), title: String, createdAt: Date = Date(), fileType: String, fileData: Data, sourceURL: String? = nil, author: String? = nil, publication: String? = nil, extractedOCRText: String? = nil, pdfRenderMode: String? = nil, customPageNamesJSON: String? = nil, lastOpenedAt: Date? = nil, bookmarkedPagesJSON: String? = nil, deletedPageKeysJSON: String? = nil, manualOutlineJSON: String? = nil, folder: AnnoteFolder? = nil) {
+    init(id: UUID = UUID(), title: String, createdAt: Date = Date(), fileType: String, fileData: Data, sourceURL: String? = nil, author: String? = nil, publication: String? = nil, extractedOCRText: String? = nil, pdfRenderMode: String? = nil, customPageNamesJSON: String? = nil, lastOpenedAt: Date? = nil, bookmarkedPagesJSON: String? = nil, deletedPageKeysJSON: String? = nil, manualOutlineJSON: String? = nil, folder: AnnoteFolder? = nil, isSecondary: Bool = false) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
@@ -71,6 +74,7 @@ final class AnnoteDocument {
         self.deletedPageKeysJSON = deletedPageKeysJSON
         self.manualOutlineJSON = manualOutlineJSON
         self.folder = folder
+        self.isSecondary = isSecondary
     }
     
     // Computed property for page names helper
@@ -155,13 +159,22 @@ final class AnnoteFolder {
     var name: String
     var createdAt: Date
     
+    var parentFolder: AnnoteFolder?
+    
+    @Relationship(deleteRule: .cascade, inverse: \AnnoteFolder.parentFolder)
+    var subfolders: [AnnoteFolder] = []
+    
     @Relationship(deleteRule: .nullify, inverse: \AnnoteDocument.folder)
     var documents: [AnnoteDocument] = []
     
-    init(id: UUID = UUID(), name: String, createdAt: Date = Date()) {
+    var colorHex: String?
+    
+    init(id: UUID = UUID(), name: String, createdAt: Date = Date(), parentFolder: AnnoteFolder? = nil, colorHex: String? = nil) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
+        self.parentFolder = parentFolder
+        self.colorHex = colorHex
     }
 }
 

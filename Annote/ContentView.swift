@@ -119,6 +119,8 @@ struct ContentView: View {
     @State private var folderToRename: AnnoteFolder? = nil
     @State private var renameFolderName = ""
     
+    @AppStorage("isDarkMode") private var isDarkMode: Bool = true
+    
     var sortedDocuments: [AnnoteDocument] {
         switch sortOption {
         case .lastOpened:
@@ -133,10 +135,11 @@ struct ContentView: View {
     }
     
     var folderFilteredDocuments: [AnnoteDocument] {
+        let base = sortedDocuments.filter { !$0.isSecondary }
         if let folder = currentFolder {
-            return sortedDocuments.filter { $0.folder?.id == folder.id }
+            return base.filter { $0.folder?.id == folder.id }
         } else {
-            return sortedDocuments.filter { $0.folder == nil }
+            return base.filter { $0.folder == nil }
         }
     }
     
@@ -165,7 +168,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             if let folder = currentFolder {
                                 HStack(spacing: 8) {
-                                    Button(action: { currentFolder = nil }) {
+                                    Button(action: { currentFolder = folder.parentFolder }) {
                                         Image(systemName: "chevron.left")
                                             .font(.system(size: 18, weight: .semibold))
                                             .foregroundColor(Theme.textColor(for: colorScheme))
@@ -187,6 +190,15 @@ struct ContentView: View {
                             }
                         }
                         Spacer()
+                        
+                        // Light / Dark mode toggle
+                        Button(action: { withAnimation(.easeInOut(duration: 0.3)) { isDarkMode.toggle() } }) {
+                            Image(systemName: isDarkMode ? "moon.stars.fill" : "sun.max.fill")
+                                .font(.system(size: 22))
+                                .foregroundColor(Theme.textColor(for: colorScheme))
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .padding(.trailing, 8)
                         
                         Menu {
                             Button(action: { createBlankPage() }) {
@@ -280,19 +292,34 @@ struct ContentView: View {
                     } else {
                         ScrollView {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 20)], spacing: 20) {
-                                // Show folders at root level
-                                if currentFolder == nil && searchQuery.isEmpty {
-                                    ForEach(folders) { folder in
+                                // Show folders: subfolders of currentFolder, or root folders
+                                let visibleFolders: [AnnoteFolder] = {
+                                    if let current = currentFolder {
+                                        return current.subfolders
+                                    } else {
+                                        return folders.filter { $0.parentFolder == nil }
+                                    }
+                                }()
+                                
+                                if searchQuery.isEmpty {
+                                    ForEach(visibleFolders) { folder in
+                                        let folderColor: Color = {
+                                            if let hex = folder.colorHex {
+                                                return Color(hex: hex)
+                                            }
+                                            return .accentColor
+                                        }()
+                                        
                                         Button(action: { currentFolder = folder }) {
                                             VStack(spacing: 8) {
                                                 Image(systemName: "folder.fill")
                                                     .font(.system(size: 44))
-                                                    .foregroundColor(.accentColor)
+                                                    .foregroundColor(folderColor)
                                                 Text(folder.name)
                                                     .font(.system(size: 14, weight: .medium, design: .serif))
                                                     .foregroundColor(Theme.textColor(for: colorScheme))
                                                     .lineLimit(2)
-                                                Text("\(folder.documents.count) items")
+                                                Text("\(folder.documents.count + folder.subfolders.count) items")
                                                     .font(.system(size: 11))
                                                     .foregroundColor(.secondary)
                                             }
@@ -300,6 +327,19 @@ struct ContentView: View {
                                             .padding(.vertical, 20)
                                             .background(Theme.textColor(for: colorScheme).opacity(0.04))
                                             .cornerRadius(12)
+                                        }
+                                        .onDrop(of: [.text], isTargeted: nil) { providers in
+                                            guard let provider = providers.first else { return false }
+                                            provider.loadObject(ofClass: NSString.self) { str, _ in
+                                                guard let idStr = str as? String,
+                                                      let uuid = UUID(uuidString: idStr),
+                                                      let doc = documents.first(where: { $0.id == uuid }) else { return }
+                                                DispatchQueue.main.async {
+                                                    doc.folder = folder
+                                                    try? modelContext.save()
+                                                }
+                                            }
+                                            return true
                                         }
                                         .contextMenu {
                                             Button {
@@ -309,8 +349,34 @@ struct ContentView: View {
                                             } label: {
                                                 Label("Rename", systemImage: "pencil")
                                             }
+                                            
+                                            Menu {
+                                                ForEach([
+                                                    ("Blue", "#007AFF"),
+                                                    ("Red", "#FF3B30"),
+                                                    ("Green", "#34C759"),
+                                                    ("Orange", "#FF9500"),
+                                                    ("Purple", "#AF52DE"),
+                                                    ("Gray", "#8E8E93")
+                                                ], id: \.0) { name, hex in
+                                                    Button {
+                                                        folder.colorHex = hex
+                                                        try? modelContext.save()
+                                                    } label: {
+                                                        Label(name, systemImage: "circle.fill")
+                                                    }
+                                                }
+                                                Button {
+                                                    folder.colorHex = nil
+                                                    try? modelContext.save()
+                                                } label: {
+                                                    Label("Default", systemImage: "circle")
+                                                }
+                                            } label: {
+                                                Label("Color", systemImage: "paintpalette")
+                                            }
+                                            
                                             Button(role: .destructive) {
-                                                // Move documents out before deleting
                                                 for doc in folder.documents {
                                                     doc.folder = nil
                                                 }
@@ -326,6 +392,9 @@ struct ContentView: View {
                                 ForEach(filteredDocuments) { doc in
                                     NavigationLink(destination: ReaderView(document: doc)) {
                                         DocumentCard(document: doc)
+                                    }
+                                    .onDrag {
+                                        NSItemProvider(object: doc.id.uuidString as NSString)
                                     }
                                     .contextMenu {
                                         Button {
@@ -433,7 +502,7 @@ struct ContentView: View {
                 Button("Create") {
                     let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !name.isEmpty {
-                        let folder = AnnoteFolder(name: name)
+                        let folder = AnnoteFolder(name: name, parentFolder: currentFolder)
                         modelContext.insert(folder)
                         try? modelContext.save()
                     }
@@ -453,6 +522,7 @@ struct ContentView: View {
                 Button("Cancel", role: .cancel) { folderToRename = nil }
             }
         }
+        .preferredColorScheme(isDarkMode ? .dark : .light)
     }
 
     

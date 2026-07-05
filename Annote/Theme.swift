@@ -31,7 +31,7 @@ extension UTType {
 enum Theme {
     // Light appearance
     static let lightText = Color(hex: "1C1C1C")
-    static let lightBackground = Color(hex: "F5F0E8")
+    static let lightBackground = Color(hex: "F8F5EF")
 
     // Dark appearance
     static let darkText = Color(hex: "E8E8E8")
@@ -39,7 +39,7 @@ enum Theme {
 
     // UIKit equivalents
     static let lightTextUIColor = UIColor(hex: "1C1C1C")
-    static let lightBackgroundUIColor = UIColor(hex: "F5F0E8")
+    static let lightBackgroundUIColor = UIColor(hex: "F8F5EF")
     static let darkTextUIColor = UIColor(hex: "E8E8E8")
     static let darkBackgroundUIColor = UIColor(hex: "000000")
 

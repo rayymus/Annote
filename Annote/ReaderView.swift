@@ -143,6 +143,7 @@ struct ReaderView: View {
     // Page renaming state
     @State private var isRenameAlertPresented = false
     @State private var pageNameToRename = ""
+    @State private var showAddPageButton = false
     
     private var virtualPages: [VirtualPage] {
         resolveVirtualPages(for: document, allDocuments: allDocuments)
@@ -179,6 +180,10 @@ struct ReaderView: View {
                         onSwipeLeft: {
                             if currentPage < vPages.count - 1 {
                                 withAnimation { currentPage += 1 }
+                            } else {
+                                withAnimation(.spring(response: 0.3)) {
+                                    showAddPageButton = true
+                                }
                             }
                         },
                         onSwipeRight: {
@@ -195,6 +200,34 @@ struct ReaderView: View {
                         let pages = virtualPages
                         if newPage < pages.count {
                             checkAndRunOcrIfNeeded(for: pages[newPage])
+                        }
+                        showAddPageButton = false
+                    }
+                    
+                    if showAddPageButton {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Button(action: {
+                                    appendBlankPage()
+                                    withAnimation {
+                                        showAddPageButton = false
+                                        // Navigate to the new page after a short delay
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                            currentPage = virtualPages.count - 1
+                                        }
+                                    }
+                                }) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 56))
+                                        .foregroundStyle(.white, Theme.textColor(for: colorScheme))
+                                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                                }
+                                .transition(.scale.combined(with: .opacity))
+                                Spacer()
+                            }
+                            .padding(.bottom, 80)
                         }
                     }
                 }
@@ -742,6 +775,19 @@ struct ReaderView: View {
         shareFile(url: tempURL)
     }
     
+    private func appendBlankPage() {
+        let blankDoc = AnnoteDocument(title: "Blank Page", fileType: "blank", fileData: Data(), isSecondary: true)
+        modelContext.insert(blankDoc)
+        let merge = DocumentMerge(
+            sourceDocumentId: blankDoc.id,
+            insertAfterPageIndex: currentPage,
+            sourceTitle: "Blank Page"
+        )
+        document.merges.append(merge)
+        modelContext.insert(merge)
+        try? modelContext.save()
+    }
+    
     private func shareFile(url: URL) {
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -900,6 +946,9 @@ struct OutlineView: View {
     @State private var isMergeWarningPresented = false
     @State private var pendingMergeDoc: AnnoteDocument? = nil
     @State private var isInsertPickerPresented = false
+    @State private var editingOutlineIndex: Int? = nil
+    @State private var editOutlineTitle = ""
+    @State private var isEditOutlinePresented = false
     
     var body: some View {
         NavigationStack {
@@ -1027,10 +1076,9 @@ struct OutlineView: View {
     private var outlineTab: some View {
         let autoItems = buildDocumentOutline(virtualPages: virtualPages, allDocuments: allDocuments)
         let manualItems = document.manualOutline
-        let combined = autoItems + manualItems.map { OutlineItem(title: $0.title, pageIndex: $0.pageIndex, indentLevel: $0.indentLevel) }
         
         return Group {
-            if combined.isEmpty {
+            if autoItems.isEmpty && manualItems.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "list.bullet.rectangle.portrait")
                         .font(.system(size: 48))
@@ -1044,30 +1092,70 @@ struct OutlineView: View {
                 }
             } else {
                 List {
-                    ForEach(combined) { item in
-                        Button(action: {
-                            currentPage = item.pageIndex
-                            isPresented = false
-                        }) {
-                            HStack {
-                                Text(item.title)
-                                    .font(.system(size: 16 - CGFloat(item.indentLevel) * 1.0, weight: item.indentLevel == 0 ? .bold : .medium, design: .serif))
-                                    .foregroundColor(Theme.textColor(for: colorScheme))
-                                    .padding(.leading, CGFloat(item.indentLevel) * 16)
-                                Spacer()
-                                Text("Page \(item.pageIndex + 1)")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
+                    if !autoItems.isEmpty {
+                        Section("Document Outline") {
+                            ForEach(autoItems) { item in
+                                Button(action: {
+                                    currentPage = item.pageIndex
+                                    isPresented = false
+                                }) {
+                                    HStack {
+                                        Text(item.title)
+                                            .font(.system(size: 16 - CGFloat(item.indentLevel) * 1.0, weight: item.indentLevel == 0 ? .bold : .medium, design: .serif))
+                                            .foregroundColor(Theme.textColor(for: colorScheme))
+                                            .padding(.leading, CGFloat(item.indentLevel) * 16)
+                                        Spacer()
+                                        Text("Page \(item.pageIndex + 1)")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
                             }
                         }
                     }
                     
-                    // Manual outline items (deletable)
                     Section {
+                        ForEach(Array(manualItems.enumerated()), id: \.element.id) { idx, item in
+                            Button(action: {
+                                currentPage = item.pageIndex
+                                isPresented = false
+                            }) {
+                                HStack {
+                                    Text(item.title)
+                                        .font(.system(size: 16, weight: .medium, design: .serif))
+                                        .foregroundColor(Theme.textColor(for: colorScheme))
+                                    Spacer()
+                                    Text("Page \(item.pageIndex + 1)")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    var outline = document.manualOutline
+                                    outline.remove(at: idx)
+                                    document.manualOutline = outline
+                                    try? modelContext.save()
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                Button {
+                                    editingOutlineIndex = idx
+                                    editOutlineTitle = item.title
+                                    isEditOutlinePresented = true
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .tint(.orange)
+                            }
+                        }
+                        
                         Button(action: { isAddOutlinePresented = true }) {
                             Label("Add Outline for Current Page (\(currentPage + 1))", systemImage: "plus.circle")
                                 .font(.system(size: 14, weight: .medium))
                         }
+                    } header: {
+                        Text("My Outlines")
                     }
                 }
                 .listStyle(.plain)
@@ -1086,6 +1174,21 @@ struct OutlineView: View {
             }
         } message: {
             Text("Enter a title for the outline item on page \(currentPage + 1).")
+        }
+        .alert("Edit Outline Item", isPresented: $isEditOutlinePresented) {
+            TextField("Title", text: $editOutlineTitle)
+            Button("Cancel", role: .cancel) { editingOutlineIndex = nil }
+            Button("Save") {
+                if let idx = editingOutlineIndex {
+                    var outline = document.manualOutline
+                    if idx < outline.count {
+                        outline[idx] = ManualOutlineItem(title: editOutlineTitle, pageIndex: outline[idx].pageIndex, indentLevel: outline[idx].indentLevel)
+                        document.manualOutline = outline
+                        try? modelContext.save()
+                    }
+                }
+                editingOutlineIndex = nil
+            }
         }
     }
     
