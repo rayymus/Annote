@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 import PhotosUI
 import Vision
 import SwiftSoup
+import PencilKit
 
 // =========================================================================
 // MARK: - Article Parsing Data Models
@@ -120,6 +121,7 @@ struct ContentView: View {
     @State private var renameFolderName = ""
     
     @AppStorage("isDarkMode") private var isDarkMode: Bool = true
+    @State private var isCoverDrawingActive = false
     
     var sortedDocuments: [AnnoteDocument] {
         switch sortOption {
@@ -190,6 +192,18 @@ struct ContentView: View {
                             }
                         }
                         Spacer()
+                        
+                        // Cover Drawing toggle
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3)) {
+                                isCoverDrawingActive.toggle()
+                            }
+                        }) {
+                            Image(systemName: "pencil.and.outline")
+                                .font(.system(size: 22))
+                                .foregroundColor(isCoverDrawingActive ? .accentColor : Theme.textColor(for: colorScheme))
+                        }
+                        .padding(.trailing, 8)
                         
                         // Light / Dark mode toggle
                         Button(action: { withAnimation(.easeInOut(duration: 0.3)) { isDarkMode.toggle() } }) {
@@ -303,12 +317,12 @@ struct ContentView: View {
                                 
                                 if searchQuery.isEmpty {
                                     ForEach(visibleFolders) { folder in
-                                        let folderColor: Color = {
-                                            if let hex = folder.colorHex {
-                                                return Color(hex: hex)
-                                            }
-                                            return .accentColor
-                                        }()
+                                         let folderColor: Color = {
+                                             if let hex = folder.colorHex {
+                                                 return Color(hex: hex)
+                                             }
+                                             return Color(hex: "#007AFF")
+                                         }()
                                         
                                         Button(action: { currentFolder = folder }) {
                                             VStack(spacing: 8) {
@@ -328,6 +342,47 @@ struct ContentView: View {
                                             .background(Theme.textColor(for: colorScheme).opacity(0.04))
                                             .cornerRadius(12)
                                         }
+                                        .disabled(isCoverDrawingActive)
+                                        .overlay(
+                                            Group {
+                                                if isCoverDrawingActive {
+                                                    CoverCanvasView(
+                                                        drawingData: Binding<Data?>(
+                                                            get: { folder.coverDrawingData },
+                                                            set: { folder.coverDrawingData = $0; try? modelContext.save() }
+                                                        ),
+                                                        isDrawingActive: true
+                                                    )
+                                                    .cornerRadius(12)
+                                                    
+                                                    if folder.coverDrawingData != nil {
+                                                        VStack {
+                                                            HStack {
+                                                                Spacer()
+                                                                Button {
+                                                                    folder.coverDrawingData = nil
+                                                                    try? modelContext.save()
+                                                                } label: {
+                                                                    Image(systemName: "trash.circle.fill")
+                                                                        .font(.system(size: 20))
+                                                                        .foregroundColor(.red)
+                                                                        .background(Circle().fill(.white))
+                                                                }
+                                                                .padding(4)
+                                                            }
+                                                            Spacer()
+                                                        }
+                                                    }
+                                                } else if let data = folder.coverDrawingData {
+                                                    CoverCanvasView(
+                                                        drawingData: .constant(data),
+                                                        isDrawingActive: false
+                                                    )
+                                                    .allowsHitTesting(false)
+                                                    .cornerRadius(12)
+                                                }
+                                            }
+                                        )
                                         .onDrop(of: [.text], isTargeted: nil) { providers in
                                             guard let provider = providers.first else { return false }
                                             provider.loadObject(ofClass: NSString.self) { str, _ in
@@ -357,7 +412,13 @@ struct ContentView: View {
                                                     ("Green", "#34C759"),
                                                     ("Orange", "#FF9500"),
                                                     ("Purple", "#AF52DE"),
-                                                    ("Gray", "#8E8E93")
+                                                    ("Pink", "#FF2D55"),
+                                                    ("Yellow", "#FFCC00"),
+                                                    ("Teal", "#30B0C7"),
+                                                    ("Indigo", "#5856D6"),
+                                                    ("Mint", "#63E6BE"),
+                                                    ("Gray", "#8E8E93"),
+                                                    ("Brown", "#A2845E")
                                                 ], id: \.0) { name, hex in
                                                     Button {
                                                         folder.colorHex = hex
@@ -365,12 +426,7 @@ struct ContentView: View {
                                                     } label: {
                                                         Label(name, systemImage: "circle.fill")
                                                     }
-                                                }
-                                                Button {
-                                                    folder.colorHex = nil
-                                                    try? modelContext.save()
-                                                } label: {
-                                                    Label("Default", systemImage: "circle")
+                                                    .tint(Color(hex: hex))
                                                 }
                                             } label: {
                                                 Label("Color", systemImage: "paintpalette")
@@ -390,9 +446,50 @@ struct ContentView: View {
                                 }
                                 
                                 ForEach(filteredDocuments) { doc in
-                                    NavigationLink(destination: ReaderView(document: doc)) {
-                                        DocumentCard(document: doc)
-                                    }
+                                     NavigationLink(destination: ReaderView(document: doc)) {
+                                         DocumentCard(document: doc)
+                                     }
+                                     .disabled(isCoverDrawingActive)
+                                     .overlay(
+                                         Group {
+                                             if isCoverDrawingActive {
+                                                 CoverCanvasView(
+                                                     drawingData: Binding<Data?>(
+                                                         get: { doc.coverDrawingData },
+                                                         set: { doc.coverDrawingData = $0; try? modelContext.save() }
+                                                     ),
+                                                     isDrawingActive: true
+                                                 )
+                                                 .cornerRadius(12)
+                                                 
+                                                 if doc.coverDrawingData != nil {
+                                                     VStack {
+                                                         HStack {
+                                                             Spacer()
+                                                             Button {
+                                                                 doc.coverDrawingData = nil
+                                                                 try? modelContext.save()
+                                                             } label: {
+                                                                 Image(systemName: "trash.circle.fill")
+                                                                     .font(.system(size: 20))
+                                                                     .foregroundColor(.red)
+                                                                     .background(Circle().fill(.white))
+                                                             }
+                                                             .padding(4)
+                                                         }
+                                                         Spacer()
+                                                     }
+                                                 }
+                                             } else if let data = doc.coverDrawingData {
+                                                 CoverCanvasView(
+                                                     drawingData: .constant(data),
+                                                     isDrawingActive: false
+                                                 )
+                                                 .allowsHitTesting(false)
+                                                 .cornerRadius(12)
+                                             }
+                                         }
+                                     )
                                     .onDrag {
                                         NSItemProvider(object: doc.id.uuidString as NSString)
                                     }
@@ -523,6 +620,9 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(isDarkMode ? .dark : .light)
+        .onOpenURL { url in
+            importFile(at: url)
+        }
     }
 
     
@@ -537,6 +637,12 @@ struct ContentView: View {
     }
     
     private func importFile(at url: URL) {
+        let isSecurityScoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if isSecurityScoped {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
         guard let fileData = try? Data(contentsOf: url) else { return }
         let title = url.deletingPathExtension().lastPathComponent
         let ext = url.pathExtension.lowercased()
@@ -1137,6 +1243,77 @@ struct WebArticleImportView: View {
                     errorMessage = error.localizedDescription
                     isLoading = false
                 }
+            }
+        }
+}
+}
+
+// =========================================================================
+// MARK: - Cover Annotation Canvas View
+// =========================================================================
+
+struct CoverCanvasView: UIViewRepresentable {
+    @Binding var drawingData: Data?
+    let isDrawingActive: Bool
+    static let toolPicker = PKToolPicker()
+    
+    func makeUIView(context: Context) -> PKCanvasView {
+        let canvas = PKCanvasView()
+        canvas.backgroundColor = .clear
+        canvas.drawingPolicy = .anyInput
+        canvas.delegate = context.coordinator
+        
+        if let data = drawingData, let drawing = try? PKDrawing(data: data) {
+            canvas.drawing = drawing
+        }
+        
+        updateToolPicker(for: canvas)
+        return canvas
+    }
+    
+    func updateUIView(_ uiView: PKCanvasView, context: Context) {
+        if let data = drawingData, let drawing = try? PKDrawing(data: data) {
+            if uiView.drawing != drawing {
+                uiView.drawing = drawing
+            }
+        } else {
+            uiView.drawing = PKDrawing()
+        }
+        
+        uiView.isUserInteractionEnabled = isDrawingActive
+        updateToolPicker(for: uiView)
+    }
+    
+    private func updateToolPicker(for canvas: PKCanvasView) {
+        let picker = Self.toolPicker
+        if isDrawingActive {
+            picker.addObserver(canvas)
+            picker.setVisible(true, forFirstResponder: canvas)
+            DispatchQueue.main.async {
+                canvas.becomeFirstResponder()
+            }
+        } else {
+            picker.setVisible(false, forFirstResponder: canvas)
+            picker.removeObserver(canvas)
+            canvas.resignFirstResponder()
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, PKCanvasViewDelegate {
+        var parent: CoverCanvasView
+        
+        init(_ parent: CoverCanvasView) {
+            self.parent = parent
+        }
+        
+        func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            let data = canvasView.drawing.dataRepresentation()
+            DispatchQueue.main.async {
+                self.parent.drawingData = data
             }
         }
     }

@@ -463,6 +463,7 @@
 				DEVELOPMENT_TEAM = W6J9FG4G5D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Annote/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to scan text.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -504,6 +505,7 @@
 				DEVELOPMENT_TEAM = W6J9FG4G5D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Annote/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to scan text.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

@@ -192,7 +192,7 @@ struct ZoomablePageView: UIViewRepresentable {
         )
         
         if let nav = context.coordinator.navigationController {
-            nav.interactivePopGestureRecognizer?.isEnabled = (pageIndex == 0)
+            nav.interactivePopGestureRecognizer?.isEnabled = false
         }
     }
     
@@ -558,31 +558,27 @@ struct ZoomablePageView: UIViewRepresentable {
                         var intersectedWords: [OCRWord] = []
                         for word in cachedWords {
                             let wordCanvasRect = word.rect.offsetBy(dx: currentPageFrameInCanvas.minX, dy: currentPageFrameInCanvas.minY)
-                            // Robust segment check: does any line segment of the stroke cross the word horizontally and vertically?
+                            let expandedRect = wordCanvasRect.insetBy(dx: -4.0, dy: -wordCanvasRect.height * 0.8)
                             var intersected = false
                             let pathCount = finalStroke.path.count
                             if pathCount > 1 {
                                 for i in 1..<pathCount {
                                     let pA = finalStroke.path[i-1].location.applying(finalStroke.transform)
                                     let pB = finalStroke.path[i].location.applying(finalStroke.transform)
-                                    let minSegX = min(pA.x, pB.x)
-                                    let maxSegX = max(pA.x, pB.x)
+                                    let segMinX = min(pA.x, pB.x)
+                                    let segMaxX = max(pA.x, pB.x)
+                                    let segMinY = min(pA.y, pB.y)
+                                    let segMaxY = max(pA.y, pB.y)
+                                    let segRect = CGRect(x: segMinX, y: segMinY, width: max(1.0, segMaxX - segMinX), height: max(1.0, segMaxY - segMinY))
                                     
-                                    let overlapStart = max(minSegX, wordCanvasRect.minX)
-                                    let overlapEnd = min(maxSegX, wordCanvasRect.maxX)
-                                    let overlapWidth = overlapEnd - overlapStart
-                                    
-                                    if overlapWidth >= min(6.0, wordCanvasRect.width * 0.2) {
-                                        let segMidY = (pA.y + pB.y) / 2.0
-                                        if abs(segMidY - wordCanvasRect.midY) <= wordCanvasRect.height * 0.5 {
-                                            intersected = true
-                                            break
-                                        }
+                                    if segRect.intersects(expandedRect) {
+                                        intersected = true
+                                        break
                                     }
                                 }
                             } else if let pt = finalStroke.path.first {
                                 let loc = pt.location.applying(finalStroke.transform)
-                                if wordCanvasRect.contains(loc) {
+                                if expandedRect.contains(loc) {
                                     intersected = true
                                 }
                             }
@@ -805,7 +801,7 @@ struct ZoomablePageView: UIViewRepresentable {
                     let pageContainer = UIView(frame: CGRect(x: 0, y: 0, width: originalWidth, height: originalHeight))
                     pageContainer.addSubview(imageView)
                     
-                    if isMerged {
+                    if isMerged && sourceTitle != "Blank Page" {
                         let label = UILabel(frame: CGRect(x: 20, y: 15, width: originalWidth - 40, height: 25))
                         label.font = UIFont.systemFont(ofSize: 12, weight: .bold)
                         label.textColor = UIColor.gray.withAlphaComponent(0.6)
@@ -821,7 +817,7 @@ struct ZoomablePageView: UIViewRepresentable {
                     let blankView = UIView(frame: CGRect(x: 0, y: 0, width: originalWidth, height: originalHeight))
                     blankView.backgroundColor = Theme.backgroundColorUIColor(for: colorScheme)
                     
-                    if isMerged {
+                    if isMerged && sourceTitle != "Blank Page" {
                         let label = UILabel(frame: CGRect(x: 20, y: 15, width: originalWidth - 40, height: 25))
                         label.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
                         label.textColor = Theme.textColorUIColor(for: colorScheme).withAlphaComponent(0.4)
@@ -1228,7 +1224,7 @@ struct ZoomablePageView: UIViewRepresentable {
             }
             
             // ponytail: run OCR lazily without touching layout/zoom state
-            if isHighlightAssistEnabled && cachedWords.isEmpty && !needsRebuild && !ocrInProgress {
+            if isHighlightAssistEnabled && cachedWords.isEmpty && !ocrInProgress {
                 if let imgOcr = lastUiImageForOCR {
                     runOCR(image: imgOcr)
                 } else if fileType == "txt" || fileType == "md" || fileType == "article" {

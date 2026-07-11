@@ -57,7 +57,13 @@ final class AnnoteDocument {
     @Relationship(deleteRule: .cascade, inverse: \PageImageOverlay.document)
     var overlays: [PageImageOverlay] = []
     
-    init(id: UUID = UUID(), title: String, createdAt: Date = Date(), fileType: String, fileData: Data, sourceURL: String? = nil, author: String? = nil, publication: String? = nil, extractedOCRText: String? = nil, pdfRenderMode: String? = nil, customPageNamesJSON: String? = nil, lastOpenedAt: Date? = nil, bookmarkedPagesJSON: String? = nil, deletedPageKeysJSON: String? = nil, manualOutlineJSON: String? = nil, folder: AnnoteFolder? = nil, isSecondary: Bool = false) {
+    // External storage for cover drawings
+    @Attribute(.externalStorage) var coverDrawingData: Data?
+    
+    // Custom page order JSON
+    var pageOrderJSON: String?
+    
+    init(id: UUID = UUID(), title: String, createdAt: Date = Date(), fileType: String, fileData: Data, sourceURL: String? = nil, author: String? = nil, publication: String? = nil, extractedOCRText: String? = nil, pdfRenderMode: String? = nil, customPageNamesJSON: String? = nil, lastOpenedAt: Date? = nil, bookmarkedPagesJSON: String? = nil, deletedPageKeysJSON: String? = nil, manualOutlineJSON: String? = nil, folder: AnnoteFolder? = nil, isSecondary: Bool = false, coverDrawingData: Data? = nil, pageOrderJSON: String? = nil) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
@@ -75,6 +81,8 @@ final class AnnoteDocument {
         self.manualOutlineJSON = manualOutlineJSON
         self.folder = folder
         self.isSecondary = isSecondary
+        self.coverDrawingData = coverDrawingData
+        self.pageOrderJSON = pageOrderJSON
     }
     
     // Computed property for page names helper
@@ -144,6 +152,22 @@ final class AnnoteDocument {
             }
         }
     }
+
+    var pageOrder: [String] {
+        get {
+            guard let data = pageOrderJSON?.data(using: .utf8),
+                  let arr = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return arr
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue),
+               let str = String(data: data, encoding: .utf8) {
+                pageOrderJSON = str
+            }
+        }
+    }
 }
 
 struct ManualOutlineItem: Codable, Identifiable {
@@ -169,12 +193,15 @@ final class AnnoteFolder {
     
     var colorHex: String?
     
-    init(id: UUID = UUID(), name: String, createdAt: Date = Date(), parentFolder: AnnoteFolder? = nil, colorHex: String? = nil) {
+    @Attribute(.externalStorage) var coverDrawingData: Data?
+    
+    init(id: UUID = UUID(), name: String, createdAt: Date = Date(), parentFolder: AnnoteFolder? = nil, colorHex: String? = nil, coverDrawingData: Data? = nil) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.parentFolder = parentFolder
         self.colorHex = colorHex
+        self.coverDrawingData = coverDrawingData
     }
 }
 

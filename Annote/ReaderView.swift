@@ -70,14 +70,14 @@ func nativePageCount(for document: AnnoteDocument) -> Int {
 }
 
 func resolveVirtualPages(for document: AnnoteDocument, allDocuments: [AnnoteDocument]) -> [VirtualPage] {
-    var virtualPages: [VirtualPage] = []
+    var defaultPages: [VirtualPage] = []
     let deletedKeys = document.deletedPageKeys
     
     let count = nativePageCount(for: document)
     for i in 0..<count {
         let key = "\(document.id)-\(i)"
         if deletedKeys.contains(key) { continue }
-        virtualPages.append(VirtualPage(
+        defaultPages.append(VirtualPage(
             sourceDocumentId: document.id,
             sourceTitle: document.title,
             fileType: document.fileType,
@@ -87,7 +87,7 @@ func resolveVirtualPages(for document: AnnoteDocument, allDocuments: [AnnoteDocu
         ))
     }
     
-    let sortedMerges = document.merges.sorted(by: { $0.insertAfterPageIndex > $1.insertAfterPageIndex })
+    let sortedMerges = document.merges.sorted(by: { $0.insertAfterPageIndex < $1.insertAfterPageIndex })
     for merge in sortedMerges {
         guard let sourceDoc = allDocuments.first(where: { $0.id == merge.sourceDocumentId }) else { continue }
         let sourcePageCount = nativePageCount(for: sourceDoc)
@@ -106,11 +106,39 @@ func resolveVirtualPages(for document: AnnoteDocument, allDocuments: [AnnoteDocu
             ))
         }
         
-        let insertIndex = min(merge.insertAfterPageIndex + 1, virtualPages.count)
-        virtualPages.insert(contentsOf: sourcePages, at: insertIndex)
+        let insertIndex = min(merge.insertAfterPageIndex + 1, defaultPages.count)
+        defaultPages.insert(contentsOf: sourcePages, at: insertIndex)
     }
     
-    return virtualPages
+    let order = document.pageOrder
+    if order.isEmpty {
+        return defaultPages
+    }
+    
+    var pageMap: [String: VirtualPage] = [:]
+    for page in defaultPages {
+        let key = "\(page.sourceDocumentId)-\(page.pageIndex)"
+        pageMap[key] = page
+    }
+    
+    var orderedPages: [VirtualPage] = []
+    for key in order {
+        if let page = pageMap.removeValue(forKey: key) {
+            orderedPages.append(page)
+        }
+    }
+    
+    for page in defaultPages {
+        let key = "\(page.sourceDocumentId)-\(page.pageIndex)"
+        if pageMap[key] != nil {
+            orderedPages.append(page)
+            var newOrder = document.pageOrder
+            newOrder.append(key)
+            document.pageOrder = newOrder
+        }
+    }
+    
+    return orderedPages
 }
 
 // =========================================================================
@@ -144,6 +172,7 @@ struct ReaderView: View {
     @State private var isRenameAlertPresented = false
     @State private var pageNameToRename = ""
     @State private var showAddPageButton = false
+    @State private var showAddPageBeforeButton = false
     
     private var virtualPages: [VirtualPage] {
         resolveVirtualPages(for: document, allDocuments: allDocuments)
@@ -165,71 +194,123 @@ struct ReaderView: View {
                     let vPage = vPages[activePageIndex]
                     
                     // Unified zoomable page view (loads/saves drawings internally via modelContext)
-                    ZoomablePageView(
-                        documentId: vPage.sourceDocumentId,
-                        documentData: vPage.fileData,
-                        fileType: vPage.fileType,
-                        pageIndex: vPage.pageIndex,
-                        isMerged: vPage.isMerged,
-                        sourceTitle: vPage.sourceTitle,
-                        isDrawingEnabled: isDrawingEnabled,
-                        isHighlightAssistEnabled: isHighlightAssistEnabled,
-                        colorScheme: colorScheme,
-                        allDocuments: allDocuments,
-                        modelContext: modelContext,
-                        onSwipeLeft: {
-                            if currentPage < vPages.count - 1 {
-                                withAnimation { currentPage += 1 }
-                            } else {
-                                withAnimation(.spring(response: 0.3)) {
-                                    showAddPageButton = true
+                    ZStack(alignment: .trailing) {
+                        ZoomablePageView(
+                            documentId: vPage.sourceDocumentId,
+                            documentData: vPage.fileData,
+                            fileType: vPage.fileType,
+                            pageIndex: vPage.pageIndex,
+                            isMerged: vPage.isMerged,
+                            sourceTitle: vPage.sourceTitle,
+                            isDrawingEnabled: isDrawingEnabled,
+                            isHighlightAssistEnabled: isHighlightAssistEnabled,
+                            colorScheme: colorScheme,
+                            allDocuments: allDocuments,
+                            modelContext: modelContext,
+                            onSwipeLeft: {
+                                if currentPage < vPages.count - 1 {
+                                    withAnimation { currentPage += 1 }
+                                } else {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        showAddPageButton = true
+                                    }
+                                }
+                            },
+                            onSwipeRight: {
+                                if currentPage > 0 {
+                                    withAnimation { currentPage -= 1 }
+                                } else {
+                                    withAnimation(.spring(response: 0.3)) {
+                                        showAddPageBeforeButton = true
+                                    }
                                 }
                             }
-                        },
-                        onSwipeRight: {
-                            if currentPage > 0 {
-                                withAnimation { currentPage -= 1 }
+                        )
+                        .id("\(vPage.sourceDocumentId)-\(vPage.pageIndex)") // Force recreate view when page changes
+                        .offset(x: showAddPageButton ? -80 : (showAddPageBeforeButton ? 80 : 0))
+                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: showAddPageButton)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: showAddPageBeforeButton)
+                        .onAppear {
+                            checkAndRunOcrIfNeeded(for: vPage)
+                        }
+                        .onChange(of: currentPage) { oldPage, newPage in
+                            let pages = virtualPages
+                            if newPage < pages.count {
+                                checkAndRunOcrIfNeeded(for: pages[newPage])
                             }
+                            showAddPageButton = false
+                            showAddPageBeforeButton = false
                         }
-                    )
-                    .id("\(vPage.sourceDocumentId)-\(vPage.pageIndex)") // Force recreate view when page changes
-                    .onAppear {
-                        checkAndRunOcrIfNeeded(for: vPage)
-                    }
-                    .onChange(of: currentPage) { oldPage, newPage in
-                        let pages = virtualPages
-                        if newPage < pages.count {
-                            checkAndRunOcrIfNeeded(for: pages[newPage])
+                        .overlay(
+                            Group {
+                                if showAddPageButton || showAddPageBeforeButton {
+                                    Color.clear
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            withAnimation(.spring(response: 0.3)) {
+                                                showAddPageButton = false
+                                                showAddPageBeforeButton = false
+                                            }
+                                        }
+                                }
+                            }
+                        )
+                        
+                        // Right edge append button
+                        if showAddPageButton {
+                            Button(action: {
+                                appendBlankPage()
+                                withAnimation {
+                                    showAddPageButton = false
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                        currentPage = virtualPages.count - 1
+                                    }
+                                }
+                            }) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Theme.textColor(for: colorScheme))
+                                        .frame(width: 56, height: 56)
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 24, weight: .bold))
+                                        .foregroundColor(Theme.backgroundColor(for: colorScheme))
+                                }
+                                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+                            }
+                            .padding(.trailing, 12)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
-                        showAddPageButton = false
                     }
-                    
-                    if showAddPageButton {
-                        VStack {
-                            Spacer()
-                            HStack {
-                                Spacer()
+                    .overlay(
+                        ZStack(alignment: .leading) {
+                            Color.clear
+                            
+                            // Left edge prepend button
+                            if showAddPageBeforeButton {
                                 Button(action: {
-                                    appendBlankPage()
+                                    prependBlankPage()
                                     withAnimation {
-                                        showAddPageButton = false
-                                        // Navigate to the new page after a short delay
+                                        showAddPageBeforeButton = false
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                            currentPage = virtualPages.count - 1
+                                            currentPage = 0
                                         }
                                     }
                                 }) {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.system(size: 56))
-                                        .foregroundStyle(.white, Theme.textColor(for: colorScheme))
-                                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                                    ZStack {
+                                        Circle()
+                                            .fill(Theme.textColor(for: colorScheme))
+                                            .frame(width: 56, height: 56)
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 24, weight: .bold))
+                                            .foregroundColor(Theme.backgroundColor(for: colorScheme))
+                                    }
+                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
                                 }
-                                .transition(.scale.combined(with: .opacity))
-                                Spacer()
+                                .padding(.leading, 12)
+                                .transition(.move(edge: .leading).combined(with: .opacity))
                             }
-                            .padding(.bottom, 80)
                         }
-                    }
+                    )
                 }
                 
                 // Edge tap zones for UI toggle
@@ -788,6 +869,29 @@ struct ReaderView: View {
         try? modelContext.save()
     }
     
+    private func prependBlankPage() {
+        let blankDoc = AnnoteDocument(title: "Blank Page", fileType: "blank", fileData: Data(), isSecondary: true)
+        modelContext.insert(blankDoc)
+        let merge = DocumentMerge(
+            sourceDocumentId: blankDoc.id,
+            insertAfterPageIndex: -1,
+            sourceTitle: "Blank Page"
+        )
+        document.merges.append(merge)
+        modelContext.insert(merge)
+        
+        // Update pageOrder to place new page first
+        let currentPages = resolveVirtualPages(for: document, allDocuments: allDocuments)
+        let newKey = "\(blankDoc.id)-0"
+        var order = document.pageOrder
+        if order.isEmpty {
+            order = currentPages.map { "\($0.sourceDocumentId)-\($0.pageIndex)" }
+        }
+        order.insert(newKey, at: 0)
+        document.pageOrder = order
+        try? modelContext.save()
+    }
+    
     private func shareFile(url: URL) {
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -998,6 +1102,14 @@ struct OutlineView: View {
             .padding(.horizontal)
             .padding(.bottom, 8)
             
+            HStack {
+                EditButton()
+                    .font(.system(size: 14, weight: .medium))
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+            
             List {
                 ForEach(Array(virtualPages.enumerated()), id: \.offset) { idx, vPage in
                     Button(action: {
@@ -1034,6 +1146,24 @@ struct OutlineView: View {
                             }
                         }
                     }
+                    .contextMenu {
+                        Button {
+                            insertBlankPageAt(index: idx)
+                        } label: {
+                            Label("Insert Blank Before", systemImage: "plus.square.dashed")
+                        }
+                        Button {
+                            insertBlankPageAt(index: idx + 1)
+                        } label: {
+                            Label("Insert Blank After", systemImage: "plus.square.dashed")
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            deletePage(at: idx, vPage: vPage)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             deletePage(at: idx, vPage: vPage)
@@ -1042,6 +1172,7 @@ struct OutlineView: View {
                         }
                     }
                 }
+                .onMove(perform: movePages)
             }
             .listStyle(.plain)
         }
@@ -1263,6 +1394,38 @@ struct OutlineView: View {
         if currentPage >= virtualPages.count - 1 {
             currentPage = max(0, currentPage - 1)
         }
+        try? modelContext.save()
+    }
+    
+    private func movePages(from source: IndexSet, to destination: Int) {
+        let pages = virtualPages
+        var keys = pages.map { "\($0.sourceDocumentId)-\($0.pageIndex)" }
+        keys.move(fromOffsets: source, toOffset: destination)
+        document.pageOrder = keys
+        try? modelContext.save()
+    }
+    
+    private func insertBlankPageAt(index: Int) {
+        let blankDoc = AnnoteDocument(title: "Blank Page", fileType: "blank", fileData: Data(), isSecondary: true)
+        modelContext.insert(blankDoc)
+        let merge = DocumentMerge(
+            sourceDocumentId: blankDoc.id,
+            insertAfterPageIndex: max(0, index - 1),
+            sourceTitle: "Blank Page"
+        )
+        document.merges.append(merge)
+        modelContext.insert(merge)
+        
+        // Update pageOrder to place new page at the specified index
+        let currentPages = virtualPages
+        let newKey = "\(blankDoc.id)-0"
+        var order = document.pageOrder
+        if order.isEmpty {
+            order = currentPages.map { "\($0.sourceDocumentId)-\($0.pageIndex)" }
+        }
+        let insertIdx = min(index, order.count)
+        order.insert(newKey, at: insertIdx)
+        document.pageOrder = order
         try? modelContext.save()
     }
     
